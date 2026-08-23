@@ -72,18 +72,6 @@ export const plugins = [
             [data-theme='simple-liquid-glass'] .chrome-panel {
               box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
             }
-            /* Neutralize simple-liquid-glass's own (dead feImage) backdrop-filter;
-               our surface applies blur + saturate + feTurbulence refraction on the
-               .slg-glass overlay instead. */
-            [data-theme='simple-liquid-glass'] .slg-base [style*='backdrop-filter'] {
-              backdrop-filter: none !important;
-              -webkit-backdrop-filter: none !important;
-            }
-            .slg-base,
-            .slg-base * {
-              transition: none !important;
-              animation: none !important;
-            }
             [data-theme='simple-liquid-glass'] .settings-sidebar {
               background: rgba(28, 36, 52, 0.42) !important;
               border-color: rgba(255, 255, 255, 0.12) !important;

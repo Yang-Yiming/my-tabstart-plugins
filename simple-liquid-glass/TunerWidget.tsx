@@ -15,7 +15,6 @@ export function TunerWidget({ widgetKey }: WidgetProps) {
   const rows: Array<[string, string]> = [
     ['disp', formatValue(params.displacementScale)],
     ['aber', formatValue(params.aberrationIntensity)],
-    ['lens', params.lens],
     ['blur', `${formatValue(params.blur)}px`],
     ['saturation', `${formatValue(params.saturation)}%`],
     ['frost', formatValue(params.frost)],

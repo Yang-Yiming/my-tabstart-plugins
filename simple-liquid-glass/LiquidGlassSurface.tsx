@@ -1,25 +1,29 @@
 import { useId } from 'react'
 import type { HTMLAttributes } from 'react'
-import { LiquidGlass } from 'simple-liquid-glass'
 import { useWidgetSettings } from '@host/plugins/widgetSettings'
 import { glassParams, TUNER_WIDGET_ID } from './tuner'
 
+/**
+ * Fully self-contained liquid glass surface. No third-party dependency.
+ *
+ * Layers (bottom → top), all pinned under the content with negative z-index:
+ *   1. refraction overlay  — backdrop-filter = blur + saturate + feTurbulence
+ *      displacement (R/G/B offsets = chromatic aberration), frost tint, inset
+ *      highlight, drop shadow
+ *   2. glass border        — 1px gradient rim via the padding-box mask trick
+ *   3. top shine           — soft diagonal highlight
+ * The SVG filter uses only feTurbulence (procedural), which Chromium honours
+ * inside backdrop-filter url() — unlike feImage data: maps used by the
+ * liquid-glass libraries.
+ */
 export function LiquidGlassSurface({ children, className, style, ...props }: HTMLAttributes<HTMLDivElement>) {
   const filterId = useId()
   const { settings } = useWidgetSettings(TUNER_WIDGET_ID)
   const params = glassParams(settings)
 
-  // simple-liquid-glass refractions via `feImage href="data:..."`, which
-  // Chromium blocks inside SVG filters — so its displacement map never loads
-  // and there is no actual bending. Chromium does honour
-  // `backdrop-filter: url(#filter)` when the filter is procedural
-  // (feTurbulence) — verified live. So we inject our own feTurbulence +
-  // feDisplacementMap filter (R/G/B offsets = chromatic aberration) and
-  // reference it from our own overlay element's backdrop-filter.
   const rScale = params.displacementScale
   const gScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.05)
   const bScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.1)
-  const frostColor = `hsl(0 0% 100% / ${params.frost})`
   const backgroundEffect = `blur(${params.blur}px) saturate(${Math.round(params.saturation)}%) url(#${filterId})`
 
   return (
@@ -34,31 +38,7 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
         ...style,
       }}
     >
-      {/* Library visuals: edge highlights + border + frost field. Its own
-          backdrop-filter (a dead feImage url) is neutralized in CSS; we take
-          over refraction below. */}
-      <div aria-hidden="true" className="slg-base" style={{ position: 'absolute', inset: 0, zIndex: -2 }}>
-        <LiquidGlass
-          mode="custom"
-          scale={18}
-          radius={params.radius}
-          border={0.06}
-          lightness={52}
-          alpha={0.7}
-          displace={2}
-          blur={0}
-          dispersion={0}
-          saturation={100}
-          frost={params.frost}
-          lens={params.lens}
-          lensStrength={0.4}
-          borderColor="rgba(255, 255, 255, 0.34)"
-          glassColor="rgba(40, 48, 64, 0.42)"
-          style={{ position: 'absolute', inset: 0 }}
-        />
-      </div>
-
-      {/* Our refraction overlay. Own element so library re-renders never wipe it. */}
+      {/* Refraction + frost overlay */}
       <div
         aria-hidden="true"
         className="slg-glass"
@@ -67,11 +47,47 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
           inset: 0,
           zIndex: -1,
           borderRadius: params.radius,
-          background: frostColor,
+          // dark glass base (was glassColor) under the frost tint (was `frost`)
+          background: `linear-gradient(hsl(0 0% 100% / ${params.frost}), hsl(0 0% 100% / ${params.frost})), linear-gradient(rgba(40, 48, 64, 0.42), rgba(40, 48, 64, 0.42))`,
           backdropFilter: backgroundEffect,
           WebkitBackdropFilter: backgroundEffect,
           boxShadow:
-            'inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.16)',
+            'inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 12px 40px rgba(0, 0, 0, 0.25)',
+        }}
+      />
+
+      {/* 1px gradient rim (padding-box mask keeps the interior transparent) */}
+      <div
+        aria-hidden="true"
+        className="slg-border"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: -1,
+          borderRadius: params.radius,
+          border: '1px solid transparent',
+          background:
+            'linear-gradient(135deg, rgba(255,255,255,0.34), rgba(255,255,255,0.06) 30%, rgba(255,255,255,0.06) 70%, rgba(255,255,255,0.34)) border-box',
+          WebkitMask: 'linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0)',
+          WebkitMaskComposite: 'xor',
+          mask: 'linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0)',
+          maskComposite: 'exclude',
+          pointerEvents: 'none',
+        }}
+      />
+
+      {/* Soft top shine */}
+      <div
+        aria-hidden="true"
+        className="slg-shine"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: -1,
+          borderRadius: params.radius,
+          background:
+            'linear-gradient(160deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.05) 38%, rgba(255,255,255,0) 58%)',
+          pointerEvents: 'none',
         }}
       />
 
