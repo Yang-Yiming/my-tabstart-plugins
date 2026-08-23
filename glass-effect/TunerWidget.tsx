@@ -12,13 +12,17 @@ export function TunerWidget({ widgetKey }: WidgetProps) {
   const { activeThemeId } = useActiveTheme()
   const active = activeThemeId === 'glass-effect'
 
+  const engineLabel =
+    params.engine === 'lens' ? `lens:${params.lensMode}` : params.engine === 'lgr' ? `lgr:${params.lgrMode}` : 'noise'
   const rows: Array<[string, string]> = [
+    ['engine', engineLabel],
     ['disp', formatValue(params.displacementScale)],
     ['aber', formatValue(params.aberrationIntensity)],
     ['blur', `${formatValue(params.blur)}px`],
     ['saturation', `${formatValue(params.saturation)}%`],
     ['frost', formatValue(params.frost)],
   ]
+  if (params.engine === 'lens') rows.splice(2, 0, ['lensStr', formatValue(params.lensStrength)])
 
   return (
     <WidgetCard className="flex h-full flex-col justify-between gap-3">

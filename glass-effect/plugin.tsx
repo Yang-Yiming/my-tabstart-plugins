@@ -32,7 +32,7 @@ export const plugins = [
   {
     id: 'glass-effect',
     name: 'Glass Effect',
-    description: '为 widget 表面提供真实折射与毛玻璃质感。',
+    description: '为 widget 表面提供真实折射与毛玻璃质感（相图 / 噪声双引擎）。',
     builtin: false,
     order: 200,
     apply(ctx: HomepageContext) {
@@ -40,7 +40,7 @@ export const plugins = [
         ctx.themes.register({
           id: 'glass-effect',
           name: 'Glass Effect',
-          description: '自研的液态玻璃主题：feTurbulence 折射 + 毛玻璃。',
+          description: '自研的液态玻璃主题：参数化相图（SLG）或 feTurbulence 噪声双引擎折射 + 毛玻璃。',
           rootClass: 'theme-glass-effect',
           surface: liquidGlassSurface,
           tokens: {
