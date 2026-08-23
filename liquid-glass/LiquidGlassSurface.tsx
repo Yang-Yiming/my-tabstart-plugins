@@ -1,49 +1,103 @@
+import { useEffect, useRef } from 'react'
 import { useId } from 'react'
 import type { HTMLAttributes } from 'react'
 import LiquidGlass from 'liquid-glass-react'
 import { useWidgetSettings } from '@host/plugins/widgetSettings'
 import { glassParams, TUNER_WIDGET_ID } from './tuner'
 
-const TINT = 'rgba(18, 24, 42, 0.30)'
+// liquid-glass-react's displacement maps are data: URLs, which Chromium blocks
+// inside SVG filters (feImage). They DO load from blob: URLs. We read the map
+// the library rendered into its own <feImage>, convert it to a blob: URL once
+// (cached), and reuse the library's full filter chain with that blob — so the
+// library's actual refraction works.
+const blobCache = new Map<string, string>()
+
+async function toBlobUrl(dataUrl: string): Promise<string> {
+  const cached = blobCache.get(dataUrl)
+  if (cached) return cached
+  const res = await fetch(dataUrl)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  blobCache.set(dataUrl, url)
+  return url
+}
 
 export function LiquidGlassSurface({ children, className, style, ...props }: HTMLAttributes<HTMLDivElement>) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const filterId = useId()
   const { settings } = useWidgetSettings(TUNER_WIDGET_ID)
   const params = glassParams(settings)
 
-  // liquid-glass-react's (and simple-liquid-glass's) refraction relies on
-  // feImage href="data:..." displacement maps, which Chromium blocks inside SVG
-  // filters — so the map never loads and neither produces any actual bending.
-  // Chromium *does* honour backdrop-filter: url(#filter) when the filter is
-  // procedural (feTurbulence) — verified live. So we inject our own
-  // feTurbulence + feDisplacementMap filter (R/G/B offsets = chromatic
-  // aberration) and reference it from our own overlay element's backdrop-filter.
-  const rScale = params.displacementScale
-  const gScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.05)
-  const bScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.1)
-  const blurPx = (4 + params.blurAmount * 32).toFixed(1)
-  const backgroundEffect = `blur(${blurPx}px) saturate(${Math.round(params.saturation)}%) url(#${filterId})`
+  // Clone of the library's filter, but with feImage pointing at a blob: URL.
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    let cancelled = false
+    let insertedFilter: SVGFilterElement | null = null
+
+    const apply = async () => {
+      const libFilter = root.querySelector<SVGFilterElement>('.lgx-backdrop filter')
+      const libFeImage = libFilter?.querySelector<SVGElement>('feImage')
+      const dataUrl = libFeImage?.getAttribute('href')
+      if (!libFilter || !dataUrl) return
+
+      const blobUrl = await toBlobUrl(dataUrl)
+      if (cancelled) return
+
+      // idempotent: remove any previous clone before inserting a fresh one
+      insertedFilter?.remove()
+      const clone = libFilter.cloneNode(true) as SVGFilterElement
+      const id = `${filterId}-disp`
+      clone.setAttribute('id', id)
+      const cloneFe = clone.querySelector('feImage')
+      if (cloneFe) cloneFe.setAttribute('href', blobUrl)
+      clone.style.display = 'none'
+      root.appendChild(clone)
+      insertedFilter = clone
+
+      for (const glass of root.querySelectorAll<HTMLElement>('.lgx-backdrop .glass__warp')) {
+        const blurPx = 4 + params.blurAmount * 32
+        const value = `blur(${blurPx.toFixed(1)}px) saturate(${Math.round(params.saturation)}%) url(#${id})`
+        glass.style.backdropFilter = value
+        glass.style.setProperty('-webkit-backdrop-filter', value)
+      }
+    }
+
+    // Runs on mount and whenever a param changes; no observer loop. The rebinding
+    // reads the library's freshly-rendered <filter>/<feImage> each time. A short
+    // tick lets the lazy surface mount its defs before we look for them.
+    const timeout = setTimeout(() => void apply(), 0)
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+      insertedFilter?.remove()
+      for (const glass of root.querySelectorAll<HTMLElement>('.lgx-backdrop .glass__warp')) {
+        glass.style.backdropFilter = ''
+        glass.style.setProperty('-webkit-backdrop-filter', '')
+      }
+    }
+  }, [filterId, params.mode, params.blurAmount, params.saturation, params.displacementScale, params.aberrationIntensity, params.cornerRadius])
 
   return (
     <div
       {...props}
+      ref={rootRef}
       className={className}
       style={{
         isolation: 'isolate',
-        background: 'transparent',
+        background: 'rgba(24, 30, 48, 0.32)',
         backdropFilter: 'none',
         WebkitBackdropFilter: 'none',
         ...style,
       }}
     >
-      {/* Library structure: rim highlights + drop shadow + (dead) filter defs. */}
       <div aria-hidden="true" className="lgx-backdrop" style={{ position: 'absolute', inset: 0, zIndex: -1 }}>
         <LiquidGlass
-          mode="standard"
-          displacementScale={0}
-          blurAmount={0}
-          saturation={100}
-          aberrationIntensity={0}
+          mode={params.mode}
+          displacementScale={params.displacementScale}
+          blurAmount={params.blurAmount}
+          saturation={params.saturation}
+          aberrationIntensity={params.aberrationIntensity}
           elasticity={0}
           cornerRadius={params.cornerRadius}
           padding="0"
@@ -54,41 +108,6 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
           {null}
         </LiquidGlass>
       </div>
-
-      {/* Our refraction overlay. Own element (not /glass) so React re-renders of
-          the library never wipe the inline backdrop-filter. */}
-      <div
-        aria-hidden="true"
-        className="lgx-glass"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          zIndex: -1,
-          borderRadius: params.cornerRadius,
-          background: TINT,
-          backdropFilter: backgroundEffect,
-          WebkitBackdropFilter: backgroundEffect,
-          boxShadow:
-            'inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.16)',
-        }}
-      />
-
-      <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
-        <defs>
-          <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%" colorInterpolationFilters="sRGB">
-            <feTurbulence type="fractalNoise" baseFrequency="0.006 0.009" numOctaves="1" seed="11" result="map" />
-            <feDisplacementMap in="SourceGraphic" in2="map" scale={rScale} xChannelSelector="R" yChannelSelector="G" result="dR" />
-            <feColorMatrix in="dR" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="R" />
-            <feDisplacementMap in="SourceGraphic" in2="map" scale={gScale} xChannelSelector="R" yChannelSelector="G" result="dG" />
-            <feColorMatrix in="dG" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="G" />
-            <feDisplacementMap in="SourceGraphic" in2="map" scale={bScale} xChannelSelector="R" yChannelSelector="G" result="dB" />
-            <feColorMatrix in="dB" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="B" />
-            <feBlend in="R" in2="G" mode="screen" result="RG" />
-            <feBlend in="RG" in2="B" mode="screen" result="OUT" />
-          </filter>
-        </defs>
-      </svg>
-
       {children}
     </div>
   )

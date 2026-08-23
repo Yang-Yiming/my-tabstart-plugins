@@ -85,13 +85,12 @@ export const plugins = [
               transition: none !important;
               animation: none !important;
             }
-            /* The warp span only blurs/saturates; refraction is wired onto .glass
-               by the surface component instead. Neutralize the warp entirely to
-               avoid double-applying blur/saturation. */
+            /* The warp span carries the library's backdrop-filter. The library's
+               own filter:url(#...) displacement is a no-op (empty SourceGraphic)
+               and its feImage map is a dead data: URL — so clear that, and let
+               the surface component drive the real backdrop-filter (blob: map). */
             .lgx-backdrop .glass__warp {
               filter: none !important;
-              backdrop-filter: none !important;
-              -webkit-backdrop-filter: none !important;
             }
             [data-theme='liquid-glass'] .settings-sidebar {
               background: rgba(28, 36, 52, 0.42) !important;
