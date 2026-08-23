@@ -1,21 +1,36 @@
 import { lazy } from 'react'
 import type { HomepageContext } from '@host/plugins/runtime'
+import { defineWidgetPlugin } from '@host/plugins/runtime'
+import type { WidgetDescriptor } from '@host/plugins/types'
+import { glassSchema, TUNER_WIDGET_ID } from './tuner'
 
 const liquidGlassSurface = lazy(() =>
   import('./LiquidGlassSurface').then((module) => ({ default: module.LiquidGlassSurface })),
 )
 
-// Warm the lazy chunk at plugin load time: the surface is used by every themed
-// panel, so deferring the fetch until the first panel mounts makes that mount
-// suspend — and without it, opening Settings for the first time would flash
-// the plain panel while the liquid-glass effect warms up.
+// Warm the lazy chunk at plugin load time so themed panels don't suspend on
+// first mount (same trick as the simple-liquid-glass theme).
 void import('./LiquidGlassSurface')
+
+const tunerWidget: WidgetDescriptor = {
+  id: TUNER_WIDGET_ID,
+  name: 'Liquid Glass',
+  group: 'Plugins',
+  description: 'liquid-glass-react 主题的实时预览卡；参数在 Settings → Widgets 中调整。卡片会标注该主题是否为当前激活主题。',
+  component: lazy(() => import('./TunerWidget').then((module) => ({ default: module.TunerWidget }))),
+  defaultW: 2,
+  defaultH: 2,
+  minW: 1,
+  minH: 1,
+  order: 201,
+  settings: glassSchema,
+}
 
 export const plugins = [
   {
     id: 'liquid-glass',
     name: 'Liquid Glass',
-    description: '使用 simple-liquid-glass 为 widget 表面提供真实折射与毛玻璃质感。',
+    description: '使用 liquid-glass-react 为 widget 表面提供折射、色差与边缘高光效果。',
     builtin: false,
     order: 200,
     apply(ctx: HomepageContext) {
@@ -23,7 +38,7 @@ export const plugins = [
         ctx.themes.register({
           id: 'liquid-glass',
           name: 'Liquid Glass',
-          description: '使用 simple-liquid-glass 的液态玻璃主题。',
+          description: '使用 liquid-glass-react 的液态玻璃主题。',
           rootClass: 'theme-liquid-glass',
           surface: liquidGlassSurface,
           tokens: {
@@ -55,6 +70,29 @@ export const plugins = [
             [data-theme='liquid-glass'] .chrome-panel {
               box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
             }
+            /* The inner .glass layer shrink-wraps its content; stretch it to fill
+               the surface wrapper so the effect covers the whole panel. */
+            .liquid-glass-react-surface > .glass {
+              width: 100%;
+              height: 100%;
+            }
+            /* The library animates glassSize from a 270x69 default to the measured
+               panel size on every mount (plus hover scale/elastic transitions).
+               That showed up as a phantom liquid animation whenever a surface
+                (e.g. the search bar) mounted. Kill all of them. */
+            .lgx-backdrop,
+            .lgx-backdrop * {
+              transition: none !important;
+              animation: none !important;
+            }
+            /* The warp span only blurs/saturates; refraction is wired onto .glass
+               by the surface component instead. Neutralize the warp entirely to
+               avoid double-applying blur/saturation. */
+            .lgx-backdrop .glass__warp {
+              filter: none !important;
+              backdrop-filter: none !important;
+              -webkit-backdrop-filter: none !important;
+            }
             [data-theme='liquid-glass'] .settings-sidebar {
               background: rgba(28, 36, 52, 0.42) !important;
               border-color: rgba(255, 255, 255, 0.12) !important;
@@ -77,4 +115,6 @@ export const plugins = [
       )
     },
   },
+  defineWidgetPlugin(tunerWidget),
 ]
+
