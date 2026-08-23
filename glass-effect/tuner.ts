@@ -1,10 +1,10 @@
 import type { WidgetSettingsSchema } from '@host/plugins/types'
 import type { WidgetSettingValue, WidgetSettings } from '@host/plugins/widgetSettings'
 
-export const TUNER_WIDGET_ID = 'simple-liquid-glass-tuner'
+export const TUNER_WIDGET_ID = 'glass-effect-tuner'
 
 export const glassSchema: WidgetSettingsSchema = {
-  title: 'Simple Liquid Glass',
+  title: 'Glass Effect',
   description: '调整液态玻璃主题的折射参数，保存后立即对全部面板生效。',
   fields: [
     { type: 'number', key: 'displacementScale', label: '折射强度 displacementScale', min: 0, max: 300, step: 1, default: 70 },

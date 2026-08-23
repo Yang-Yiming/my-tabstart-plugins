@@ -10,7 +10,7 @@ export function TunerWidget({ widgetKey }: WidgetProps) {
   const { settings } = useWidgetSettings(widgetKey ?? TUNER_WIDGET_ID)
   const params = glassParams(settings)
   const { activeThemeId } = useActiveTheme()
-  const active = activeThemeId === 'simple-liquid-glass'
+  const active = activeThemeId === 'glass-effect'
 
   const rows: Array<[string, string]> = [
     ['disp', formatValue(params.displacementScale)],
@@ -24,7 +24,7 @@ export function TunerWidget({ widgetKey }: WidgetProps) {
     <WidgetCard className="flex h-full flex-col justify-between gap-3">
       <div>
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/60">Simple Liquid Glass</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/60">Glass Effect</p>
           <span
             className={
               active

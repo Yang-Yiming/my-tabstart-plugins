@@ -16,9 +16,9 @@ void import('./LiquidGlassSurface')
 
 const tunerWidget: WidgetDescriptor = {
   id: TUNER_WIDGET_ID,
-  name: 'Simple Liquid Glass',
+  name: 'Glass Effect',
   group: 'Plugins',
-  description: 'simple-liquid-glass 主题的实时预览卡；参数在 Settings → Widgets 中调整。卡片会标注该主题是否为当前激活主题。',
+  description: 'Glass Effect 主题的实时预览卡；参数在 Settings → Widgets 中调整。卡片会标注该主题是否为当前激活主题。',
   component: lazy(() => import('./TunerWidget').then((module) => ({ default: module.TunerWidget }))),
   defaultW: 2,
   defaultH: 2,
@@ -30,18 +30,18 @@ const tunerWidget: WidgetDescriptor = {
 
 export const plugins = [
   {
-    id: 'simple-liquid-glass',
-    name: 'Simple Liquid Glass',
-    description: '使用 simple-liquid-glass 为 widget 表面提供真实折射与毛玻璃质感。',
+    id: 'glass-effect',
+    name: 'Glass Effect',
+    description: '为 widget 表面提供真实折射与毛玻璃质感。',
     builtin: false,
     order: 200,
     apply(ctx: HomepageContext) {
       ctx.effect(() =>
         ctx.themes.register({
-          id: 'simple-liquid-glass',
-          name: 'Simple Liquid Glass',
-          description: '使用 simple-liquid-glass 的液态玻璃主题。',
-          rootClass: 'theme-simple-liquid-glass',
+          id: 'glass-effect',
+          name: 'Glass Effect',
+          description: '自研的液态玻璃主题：feTurbulence 折射 + 毛玻璃。',
+          rootClass: 'theme-glass-effect',
           surface: liquidGlassSurface,
           tokens: {
             '--chrome-button-bg': 'rgba(255, 255, 255, 0.12)',
@@ -65,27 +65,27 @@ export const plugins = [
             '--clock-date-text': 'rgba(255, 255, 255, 0.78)',
           },
           css: `
-            [data-theme='simple-liquid-glass'] body {
+            [data-theme='glass-effect'] body {
               background-color: #0b1220;
             }
-            [data-theme='simple-liquid-glass'] .chrome-button,
-            [data-theme='simple-liquid-glass'] .chrome-panel {
+            [data-theme='glass-effect'] .chrome-button,
+            [data-theme='glass-effect'] .chrome-panel {
               box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
             }
-            [data-theme='simple-liquid-glass'] .settings-sidebar {
+            [data-theme='glass-effect'] .settings-sidebar {
               background: rgba(28, 36, 52, 0.42) !important;
               border-color: rgba(255, 255, 255, 0.12) !important;
             }
-            [data-theme='simple-liquid-glass'] .settings-panel .text-slate-900 {
+            [data-theme='glass-effect'] .settings-panel .text-slate-900 {
               color: rgba(255, 255, 255, 0.92) !important;
             }
-            [data-theme='simple-liquid-glass'] .settings-panel .text-slate-600 {
+            [data-theme='glass-effect'] .settings-panel .text-slate-600 {
               color: rgba(255, 255, 255, 0.62) !important;
             }
-            [data-theme='simple-liquid-glass'] .settings-panel .text-slate-800 {
+            [data-theme='glass-effect'] .settings-panel .text-slate-800 {
               color: rgba(255, 255, 255, 0.84) !important;
             }
-            [data-theme='simple-liquid-glass'] .react-grid-placeholder {
+            [data-theme='glass-effect'] .react-grid-placeholder {
               border-color: rgba(255, 255, 255, 0.35) !important;
               background: rgba(255, 255, 255, 0.18) !important;
             }
