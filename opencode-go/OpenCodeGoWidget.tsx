@@ -2,7 +2,7 @@ import { Activity, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { WidgetCard } from '@host/components/WidgetCard'
 import { useStoredState } from '@host/hooks/useLocalStorage'
-import { isInPeakWindows, parsePeakWindows, PEAK_WINDOWS_JSON } from '@host/plugins/_shared/peakWindows'
+import { isInPeakWindows, parsePeakWindows, PEAK_WINDOWS_JSON } from '../_shared/peakWindows'
 import type { WidgetProps } from '@host/plugins/types'
 import { useWidgetSettings } from '@host/plugins/widgetSettings'
 
