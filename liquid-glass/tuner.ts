@@ -21,7 +21,7 @@ export const glassSchema: WidgetSettingsSchema = {
       ],
       default: 'standard',
     },
-    { type: 'number', key: 'displacementScale', label: '折射强度 displacementScale', min: 0, max: 200, step: 1, default: 64 },
+    { type: 'number', key: 'displacementScale', label: '折射强度 displacementScale', min: 0, max: 300, step: 1, default: 130 },
     { type: 'number', key: 'blurAmount', label: '磨砂模糊 blurAmount', min: 0, max: 1, step: 0.01, default: 0.2 },
     { type: 'number', key: 'saturation', label: '饱和度 saturation (%)', min: 80, max: 250, step: 5, default: 130 },
     { type: 'number', key: 'aberrationIntensity', label: '色差 aberrationIntensity', min: 0, max: 10, step: 0.1, default: 2 },
@@ -49,7 +49,7 @@ export function glassParams(settings: WidgetSettings): {
       | 'polar'
       | 'prominent'
       | 'shader',
-    displacementScale: num(settings.displacementScale, 64),
+    displacementScale: num(settings.displacementScale, 130),
     blurAmount: num(settings.blurAmount, 0.2),
     saturation: num(settings.saturation, 130),
     aberrationIntensity: num(settings.aberrationIntensity, 2),
