@@ -31,22 +31,6 @@ import { LgrGlassFilter } from './lgr/LgrGlassFilter'
  *   3. top shine           — soft diagonal highlight
  */
 
-// TEMP DIAGNOSTIC: URL probes to isolate the refraction cost. Remove once the
-// bottleneck is settled.
-// Own-content refraction needs the wallpaper URL exposed by App. The page
-// always has a background (Bing default), so this is belt-and-braces: if the
-// custom property is missing/empty, fall back to the backdrop-filter path.
-function useHasWallpaper() {
-  const [hasWallpaper, setHasWallpaper] = useState(true)
-  useLayoutEffect(() => {
-    const value = getComputedStyle(document.documentElement)
-      .getPropertyValue('--homepage-wallpaper')
-      .trim()
-    setHasWallpaper(value !== '' && value !== 'none')
-  }, [])
-  return hasWallpaper
-}
-
 // Map internal resolution: upstream simple-liquid-glass "high" quality tier.
 const MAP_DIVISOR = 2.5
 const MAP_QUANT_STEP = 16
@@ -148,7 +132,6 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
   const gScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.05)
   const bScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.1)
   const backgroundEffect = `blur(${params.blur}px) saturate(${Math.round(params.saturation)}%) url(#${filterId})`
-  const ownContentRefraction = useHasWallpaper()
   return (
     <div
       {...props}
@@ -171,30 +154,10 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
           inset: 0,
           zIndex: -1,
           borderRadius: params.radius,
-          ...(ownContentRefraction
-            ? {
-                // Own-content refraction: carry a fixed-attachment copy of the
-                // wallpaper (pixel-aligned with the page background via
-                // --homepage-wallpaper, set in App) and refract it with
-                // filter: url() — the GPU-accelerated path — instead of
-                // snapshotting the backdrop. Static content means the filter
-                // result is cacheable and scroll/hover only move the layer.
-                backgroundImage: `linear-gradient(hsl(0 0% 100% / ${params.frost}), hsl(0 0% 100% / ${params.frost})), linear-gradient(rgba(40, 48, 64, 0.42), rgba(40, 48, 64, 0.42)), var(--homepage-wallpaper)`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-                backgroundAttachment: 'fixed, fixed, fixed',
-                filter: backgroundEffect,
-                WebkitFilter: backgroundEffect,
-                willChange: 'transform',
-              }
-            : {
-                // Fallback: no wallpaper exposed — classic backdrop-filter path
-                // (known-slow with SVG reference filters on Chromium, but the
-                // only way to refract an unknown backdrop).
-                background: `linear-gradient(hsl(0 0% 100% / ${params.frost}), hsl(0 0% 100% / ${params.frost})), linear-gradient(rgba(40, 48, 64, 0.42), rgba(40, 48, 64, 0.42))`,
-                backdropFilter: backgroundEffect,
-                WebkitBackdropFilter: backgroundEffect,
-              }),
+          // dark glass base (was glassColor) under the frost tint (was `frost`)
+          background: `linear-gradient(hsl(0 0% 100% / ${params.frost}), hsl(0 0% 100% / ${params.frost})), linear-gradient(rgba(40, 48, 64, 0.42), rgba(40, 48, 64, 0.42))`,
+          backdropFilter: backgroundEffect,
+          WebkitBackdropFilter: backgroundEffect,
           boxShadow:
             'inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 12px 40px rgba(0, 0, 0, 0.25)',
         }}

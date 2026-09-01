@@ -69,6 +69,7 @@ noise: feTurbulence 程序化噪声（无需任何图片）
 - `feTurbulence`（程序化噪声）在该场景完全可用
 - `feImage` + `data:` URI → 曾实测失效；`feImage` + `blob:` URL → 可用
 - Safari / iOS / Firefox：SVG 滤镜在 `backdrop-filter` 中不执行，静默降级为普通模糊
+- **性能（2025-09 实测）**：`backdrop-filter` 里的 `feImage` 若直接引用运行时生成的 SVG blob，整页滚动/hover 会严重掉帧（Chromium 对 filter 内的外部 SVG 资源几乎每次求值都重新光栅化，而我们的 SVG 内部还有 mask/blur/blend，成本极高）。把 SVG 相图**运行时栅格化为 PNG blob**（canvas 导出，每个相图 key 一次）后完全丝滑——PNG 走普通图像解码缓存。曾尝试换赛道用 `filter: url()` 折射自带的 `background-attachment: fixed` 壁纸拷贝来绕开 backdrop-filter，结果 Chromium 在被滤镜元素上把 fixed 附件当 scroll 处理，壁纸撕裂错位，已废弃。
 
 ### 给以后开发者的建议
 
