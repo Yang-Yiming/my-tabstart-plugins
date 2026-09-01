@@ -14,7 +14,7 @@
 | 引擎 | 相图来源 | 特点 |
 | --- | --- | --- |
 | `lens`（默认） | [simple-liquid-glass](https://github.com/lucaperullo/simple-liquid-glass) 的参数化生成器 | 运行时按元素尺寸/圆角生成 SVG 相图，4 种透镜模式（classic / convex / rim / shift），边缘带宽自动适配强度防撕裂 |
-| `lgr` | [liquid-glass-react](https://github.com/rdev/liquid-glass-react) 内置的 3 张静态贴图 | 上游滤镜管线 1:1 移植（负 scale、边缘遮罩、中央清透合成）；standard / polar / prominent 三种固定外观，贴图拉伸铺满元素 |
+| `lgr` | [liquid-glass-react](https://github.com/rdev/liquid-glass-react) 内置的 3 张静态贴图 | 上游滤镜管线移植（负 scale 三通道色差、screen 合成、微模糊；**上游的"边缘遮罩+中央清透合成"链是恒等函数，已删除**，见[性能深挖](#性能深挖lgr-为什么比-lens-卡))；standard / polar / prominent 三种固定外观，贴图拉伸铺满元素 |
 | `noise` | 自研 feTurbulence 噪声场 | 无图片依赖；噪声式扭曲而非光学折射，同时作为相图未就绪时的回退 |
 
 > 折射仅在 Chromium（Chrome / Edge）生效——Safari / Firefox 不支持在 `backdrop-filter` 中运行 SVG 滤镜，这些浏览器上所有引擎都表现为纯磨砂。
@@ -34,8 +34,8 @@
 三种引擎共享同一骨架：一张"相图"（displacement map）输入 `feDisplacementMap`，按 R/G/B 三通道分别位移后用 `feColorMatrix` 抽取、`feBlend screen` 合成，即色差（chromatic aberration）。区别只在相图从哪来：
 
 ```
-lens:  运行时 SVG 字符串（渐变+遮罩） → Blob → blob: URL → feImage
-lgr:   内嵌 base64 JPEG/PNG          → Blob → blob: URL → feImage（+ 上游完整边缘遮罩/中央清透管线）
+lens:  运行时 SVG 字符串（渐变+遮罩） → Blob → blob: URL → PNG 栅格化 → feImage
+lgr:   内嵌 base64 JPEG/PNG          → Blob → blob: URL → feImage（恒等遮罩链已删，见下方性能深挖）
 noise: feTurbulence 程序化噪声（无需任何图片）
 ```
 
@@ -70,6 +70,20 @@ noise: feTurbulence 程序化噪声（无需任何图片）
 - `feImage` + `data:` URI → 曾实测失效；`feImage` + `blob:` URL → 可用
 - Safari / iOS / Firefox：SVG 滤镜在 `backdrop-filter` 中不执行，静默降级为普通模糊
 - **性能（2025-09 实测）**：`backdrop-filter` 里的 `feImage` 若直接引用运行时生成的 SVG blob，整页滚动/hover 会严重掉帧（Chromium 对 filter 内的外部 SVG 资源几乎每次求值都重新光栅化，而我们的 SVG 内部还有 mask/blur/blend，成本极高）。把 SVG 相图**运行时栅格化为 PNG blob**（canvas 导出，每个相图 key 一次）后完全丝滑——PNG 走普通图像解码缓存。曾尝试换赛道用 `filter: url()` 折射自带的 `background-attachment: fixed` 壁纸拷贝来绕开 backdrop-filter，结果 Chromium 在被滤镜元素上把 fixed 附件当 scroll 处理，壁纸撕裂错位，已废弃。
+
+### 性能深挖：`lgr` 为什么比 `lens` 卡（2026-09 代码审计）
+
+`lens` 修成 PNG 后完全丝滑，`lgr` 依旧略卡。逐一核对上游（liquid-glass-react HEAD，本插件移植自它）滤镜图后定位到两个根因，第一个已经实锤并修掉：
+
+1. **上游的"边缘遮罩 + 中央清透合成"链在 Chromium 里是恒等函数（死代码），每帧白跑 7 个全区域 pass。** 链路是 `feColorMatrix(灰度)` → `feComponentTransfer(EDGE_MASK)` → `feOffset(0,0)` → `feComponentTransfer(INVERTED_MASK)` → `2×feComposite`。看它的 color matrix：
+   ```xml
+   values="0.3 0.3 0.3 0 0
+           0.3 0.3 0.3 0 0
+           0.3 0.3 0.3 0 0
+           0 0 0 1 0"   <!-- 第 4 行：A' = A -->
+   ```
+   第 4 行把 **alpha** 原样保留，而三张贴图全部**不透明**（standard/polar 是 JPEG、prominent 是 RGB PNG，alpha 恒为 1）→ `EDGE_MASK` 的 alpha 恒为 1、`INVERTED_MASK` 恒为 0 → 最终 `over` 合成的结果逐像素 = `ABERRATED_BLURRED` 本身（中央本来就是全透，边缘遮罩全不透）。上游作者的本意显然是经典的"把亮度写进 alpha"技巧（第 4 行写成 `0.3 0.3 0.3 0 0`），但写成了恒等——所以效果上"边缘遮罩"从未生效过。**已在 `lgr/LgrGlassFilter.tsx` 删除整条链**：17 个图元 → 10 个，与 `lens` 引擎同量级（9-10 个），输出逐像素不变。若以后想启用"只在边缘折射"的观感，正确做法是给 alpha 行补上亮度系数（或按此数学预计算遮罩 PNG 喂 feImage），届时再评估。
+2. **滤镜区域 170%×170%（= 元素面积 2.89×）比 `lens` 的 140%（1.96×）大得多**——每帧每个 pass 多约 47% 像素，包括最贵的 3 个 `feDisplacementMap` 和基础 `blur(8px)`。但**不建议直接缩**：LGR 贴图在边缘处的强度很高（实测 luminance：standard 边缘均值 115、最大值 151 就在角上；polar 88），位移在边上需要采样 headroom，缩太小会在小面板 / 大 scale 下撕边（`lens` 敢用 140% 是因为它的相图自带防撕裂边缘带 + 幅度衰减，边缘近似中性）。想试的话从 150% 开始，盯 standard 模式小面板边缘。同理可试的还有删掉末尾 0.2px 的 `feGaussianBlur`（观感是色差毛刺变硬一点）。
 
 ### 给以后开发者的建议
 
