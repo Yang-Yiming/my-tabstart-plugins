@@ -1,9 +1,9 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState, useEffect } from 'react'
 import type { HTMLAttributes } from 'react'
 import { useWidgetSettings } from '@host/plugins/widgetSettings'
 import { glassParams, TUNER_WIDGET_ID } from './tuner'
 import { quantizedSize } from './slg/displacementMap'
-import { displacementMapUrl } from './slg/mapUrl'
+import { displacementMapPngUrl, displacementMapUrl } from './slg/mapUrl'
 import { LgrGlassFilter } from './lgr/LgrGlassFilter'
 
 /**
@@ -11,9 +11,11 @@ import { LgrGlassFilter } from './lgr/LgrGlassFilter'
  *
  * Three refraction engines (switchable in Settings → Widgets → Glass Effect):
  *   - `lens`  — parametric displacement map vendored from simple-liquid-glass,
- *               rendered to an SVG string at runtime and fed to <feImage> as a
- *               blob: URL (data: URLs are unreliable here; blob: is verified).
- *               Real edge refraction: clear center, bending rim. Chromium only.
+ *               rendered to an SVG string at runtime, rasterized once to a PNG
+ *               blob: URL and fed to <feImage> (raw SVG blobs are re-rasterized
+ *               by Chromium on nearly every filter evaluation; PNGs hit the
+ *               decode cache). Real edge refraction: clear center, bending rim.
+ *               Chromium only.
  *   - `lgr`   — the three static pre-encoded maps vendored from liquid-glass-
  *               react, decoded to blob: URLs and run through that library's
  *               verbatim filter graph (negative scales, edge mask, clean
@@ -28,6 +30,22 @@ import { LgrGlassFilter } from './lgr/LgrGlassFilter'
  *   2. glass border        — 1px gradient rim via the padding-box mask trick
  *   3. top shine           — soft diagonal highlight
  */
+
+// TEMP DIAGNOSTIC: URL probes to isolate the refraction cost. Remove once the
+// bottleneck is settled.
+// Own-content refraction needs the wallpaper URL exposed by App. The page
+// always has a background (Bing default), so this is belt-and-braces: if the
+// custom property is missing/empty, fall back to the backdrop-filter path.
+function useHasWallpaper() {
+  const [hasWallpaper, setHasWallpaper] = useState(true)
+  useLayoutEffect(() => {
+    const value = getComputedStyle(document.documentElement)
+      .getPropertyValue('--homepage-wallpaper')
+      .trim()
+    setHasWallpaper(value !== '' && value !== 'none')
+  }, [])
+  return hasWallpaper
+}
 
 // Map internal resolution: upstream simple-liquid-glass "high" quality tier.
 const MAP_DIVISOR = 2.5
@@ -66,34 +84,36 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
   const params = glassParams(settings)
   const [rootRef, size] = useElementSize()
 
-  // Build the lens map for the measured (quantized) element size. Null until
-  // first layout measurement or when the noise engine is selected; the filter
-  // then falls back to feTurbulence.
-  const mapUrl = useMemo(() => {
+  // Build the lens map for the measured (quantized) element size. The SVG map
+  // is built synchronously (cached per key), then rasterized to a PNG blob
+  // once — Chromium re-rasterizes feImage-referenced SVGs on almost every
+  // filter evaluation, but caches decoded PNGs, so the filter reads a raster
+  // map instead. Null until first layout measurement or while rasterizing;
+  // the filter then falls back to feTurbulence.
+  const lensMap = useMemo(() => {
     if (params.engine !== 'lens' || size.width < 8 || size.height < 8) return null
     const { newwidth, newheight } = quantizedSize(size.width, size.height, MAP_DIVISOR, MAP_QUANT_STEP)
     // Quantize the scale contribution like upstream so live slider drags don't
     // spawn a blob URL per pixel value (the band geometry depends on it).
     const qScale = Math.round(params.displacementScale / 8) * 8
-    return displacementMapUrl(
-      `w:${newwidth}|h:${newheight}|r:${params.radius}|lm:${params.lensMode}|ls:${params.lensStrength}|ds:${qScale}`,
-      {
-        width: size.width,
-        height: size.height,
-        divisor: MAP_DIVISOR,
-        quantStep: MAP_QUANT_STEP,
-        radius: params.radius,
-        border: MAP_BORDER,
-        lightness: MAP_LIGHTNESS,
-        alpha: MAP_ALPHA,
-        displace: MAP_BAND_BLUR,
-        blend: 'difference',
-        shapeAdapt: true,
-        lens: params.lensMode,
-        lensStrength: params.lensStrength,
-        scale: params.displacementScale,
-      },
-    )
+    const key = `w:${newwidth}|h:${newheight}|r:${params.radius}|lm:${params.lensMode}|ls:${params.lensStrength}|ds:${qScale}`
+    const svgUrl = displacementMapUrl(key, {
+      width: size.width,
+      height: size.height,
+      divisor: MAP_DIVISOR,
+      quantStep: MAP_QUANT_STEP,
+      radius: params.radius,
+      border: MAP_BORDER,
+      lightness: MAP_LIGHTNESS,
+      alpha: MAP_ALPHA,
+      displace: MAP_BAND_BLUR,
+      blend: 'difference',
+      shapeAdapt: true,
+      lens: params.lensMode,
+      lensStrength: params.lensStrength,
+      scale: params.displacementScale,
+    })
+    return { key, svgUrl, width: newwidth, height: newheight }
   }, [
     params.engine,
     params.lensMode,
@@ -104,12 +124,31 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
     size.height,
   ])
 
-  const useLensMap = params.engine === 'lens' && mapUrl !== null
+  // Rasterize the SVG map to a PNG blob (one-time per key). The last good URL
+  // is kept while a new key rasterizes, so size transitions don't flicker to
+  // the noise fallback.
+  const [pngMapUrl, setPngMapUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!lensMap) {
+      setPngMapUrl(null)
+      return
+    }
+    let cancelled = false
+    void displacementMapPngUrl(lensMap.key, lensMap.svgUrl, lensMap.width, lensMap.height).then((url) => {
+      if (!cancelled && url) setPngMapUrl(url)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [lensMap])
+
+  const useLensMap = params.engine === 'lens' && pngMapUrl !== null
 
   const rScale = params.displacementScale
   const gScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.05)
   const bScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.1)
   const backgroundEffect = `blur(${params.blur}px) saturate(${Math.round(params.saturation)}%) url(#${filterId})`
+  const ownContentRefraction = useHasWallpaper()
   return (
     <div
       {...props}
@@ -132,10 +171,30 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
           inset: 0,
           zIndex: -1,
           borderRadius: params.radius,
-          // dark glass base (was glassColor) under the frost tint (was `frost`)
-          background: `linear-gradient(hsl(0 0% 100% / ${params.frost}), hsl(0 0% 100% / ${params.frost})), linear-gradient(rgba(40, 48, 64, 0.42), rgba(40, 48, 64, 0.42))`,
-          backdropFilter: backgroundEffect,
-          WebkitBackdropFilter: backgroundEffect,
+          ...(ownContentRefraction
+            ? {
+                // Own-content refraction: carry a fixed-attachment copy of the
+                // wallpaper (pixel-aligned with the page background via
+                // --homepage-wallpaper, set in App) and refract it with
+                // filter: url() — the GPU-accelerated path — instead of
+                // snapshotting the backdrop. Static content means the filter
+                // result is cacheable and scroll/hover only move the layer.
+                backgroundImage: `linear-gradient(hsl(0 0% 100% / ${params.frost}), hsl(0 0% 100% / ${params.frost})), linear-gradient(rgba(40, 48, 64, 0.42), rgba(40, 48, 64, 0.42)), var(--homepage-wallpaper)`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundAttachment: 'fixed, fixed, fixed',
+                filter: backgroundEffect,
+                WebkitFilter: backgroundEffect,
+                willChange: 'transform',
+              }
+            : {
+                // Fallback: no wallpaper exposed — classic backdrop-filter path
+                // (known-slow with SVG reference filters on Chromium, but the
+                // only way to refract an unknown backdrop).
+                background: `linear-gradient(hsl(0 0% 100% / ${params.frost}), hsl(0 0% 100% / ${params.frost})), linear-gradient(rgba(40, 48, 64, 0.42), rgba(40, 48, 64, 0.42))`,
+                backdropFilter: backgroundEffect,
+                WebkitBackdropFilter: backgroundEffect,
+              }),
           boxShadow:
             'inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 12px 40px rgba(0, 0, 0, 0.25)',
         }}
@@ -196,7 +255,7 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
             <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%" colorInterpolationFilters="sRGB">
               {useLensMap ? (
                 // The SLG classic/convex/rim maps encode X in red and Y in blue.
-                <feImage href={mapUrl ?? undefined} x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" result="map" />
+                <feImage href={pngMapUrl ?? undefined} x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" result="map" />
               ) : (
                 <feTurbulence type="fractalNoise" baseFrequency="0.006 0.009" numOctaves={1} seed={11} result="map" />
               )}
