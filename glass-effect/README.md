@@ -29,6 +29,8 @@
 2. **渐变边框 `.slg-border`** —— 1px 渐变 rim（padding-box mask 技巧）
 3. **顶部高光 `.slg-shine`** —— 对角白色渐变
 
+这三个层都是 `position: absolute; inset: 0`，**锚定到最近的已定位祖先**——也就是宿主传给 `ThemeSurface` 的那个元素自身。宿主侧的契约：使用 `LiquidGlassSurface`（`ThemeSurface`）时必须在 `className` 里自带定位（`relative` 或 `absolute`），否则玻璃层会撑满整个页面级的定位祖先（如 `.dashboard-grid`），面板本体则完全透明——漏掉 `relative` 的典型症状就是"玻璃铺满全屏、面板消失"。
+
 ### 滤镜管线
 
 三种引擎共享同一骨架：一张"相图"（displacement map）输入 `feDisplacementMap`，按 R/G/B 三通道分别位移后用 `feColorMatrix` 抽取、`feBlend screen` 合成，即色差（chromatic aberration）。区别只在相图从哪来：
