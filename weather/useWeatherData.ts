@@ -3,7 +3,9 @@ import { useStoredState } from '@host/hooks/useLocalStorage'
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search'
+const REVERSE_GEOCODE_URL = 'https://api.bigdatacloud.net/data/reverse-geocode-client'
 const GEO_TIMEOUT_MS = 5000
+const REVERSE_GEOCODE_TIMEOUT_MS = 3500
 
 export interface WeatherLocation {
   lat: number
@@ -69,6 +71,13 @@ interface GeocodeHit {
   longitude: number
 }
 
+interface ReverseGeocodeResult {
+  city?: string
+  locality?: string
+  principalSubdivision?: string
+  countryName?: string
+}
+
 // 浏览器定位按会话共享一次结果：多个尺寸实例同时挂载时只询问/请求一次。
 let geoCoordsPromise: Promise<GeolocationCoordinates | null> | null = null
 
@@ -87,6 +96,36 @@ function getGeoCoords(): Promise<GeolocationCoordinates | null> {
 }
 
 const geocodeCache = new Map<string, Promise<GeocodeHit | null>>()
+const reverseGeocodeCache = new Map<string, Promise<string | null>>()
+
+function reverseGeocode(lat: number, lon: number): Promise<string | null> {
+  const key = `${lat.toFixed(2)},${lon.toFixed(2)}`
+  let hit = reverseGeocodeCache.get(key)
+  if (!hit) {
+    const request = fetch(
+      `${REVERSE_GEOCODE_URL}?latitude=${encodeURIComponent(String(lat))}&longitude=${encodeURIComponent(String(lon))}&localityLanguage=zh`,
+      { cache: 'no-store' },
+    )
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((json: ReverseGeocodeResult) => {
+        // 尽量显示“市 + 区/县”，更接近常见天气应用的地址展示；
+        // 同名或空字段时自动去重，并避免展示过长的完整地址。
+        const city = json.city?.trim() || ''
+        const locality = json.locality?.trim() || ''
+        if (city && locality && city !== locality && !city.includes(locality) && !locality.includes(city)) {
+          return `${city} · ${locality}`
+        }
+        return city || locality || json.principalSubdivision?.trim() || null
+      })
+      .catch(() => null)
+    hit = Promise.race([
+      request,
+      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), REVERSE_GEOCODE_TIMEOUT_MS)),
+    ])
+    reverseGeocodeCache.set(key, hit)
+  }
+  return hit
+}
 
 function geocodeCity(city: string): Promise<GeocodeHit | null> {
   const trimmed = city.trim()
@@ -114,10 +153,11 @@ async function resolveLocation(city: string, useGeolocation: boolean): Promise<W
     if (coords) {
       const lat = Number(coords.latitude.toFixed(2))
       const lon = Number(coords.longitude.toFixed(2))
+      const place = await reverseGeocode(lat, lon)
       return {
         lat,
         lon,
-        label: '我的位置',
+        label: place || '我的位置',
         key: `geo:${lat},${lon}`,
         cityUsed: city,
         useGeoUsed: true,
