@@ -1,18 +1,43 @@
 import { lazy } from 'react'
+import { ACTIVE_THEME_KEY } from '@host/plugins/hooks'
 import type { HomepageContext } from '@host/plugins/runtime'
 import { defineWidgetPlugin } from '@host/plugins/runtime'
 import type { WidgetDescriptor } from '@host/plugins/types'
+import { storageArea } from '@host/lib/storage'
 import { glassSchema, TUNER_WIDGET_ID } from './tuner'
 
+const GLASS_THEME_ID = 'glass-effect'
+
+/**
+ * Chunk-split on purpose: the surface carries the vendored displacement maps
+ * (~34 kB gzip), so it must not be folded into the entry bundle. A static
+ * import here would undo that, which is why the specifier is loaded lazily and
+ * both consumers below share this one loader.
+ */
+const loadLiquidGlassSurface = () => import('./LiquidGlassSurface')
+
 const liquidGlassSurface = lazy(() =>
-  import('./LiquidGlassSurface').then((module) => ({ default: module.LiquidGlassSurface })),
+  loadLiquidGlassSurface().then((module) => ({ default: module.LiquidGlassSurface })),
 )
 
-// Warm the lazy chunk at plugin load time: the surface is used by every themed
-// panel, so deferring the fetch until the first panel mounts makes that mount
-// suspend — and without it, opening Settings for the first time would flash
-// the plain panel while the liquid-glass effect warms up.
-void import('./LiquidGlassSurface')
+/**
+ * Warm the surface chunk when — and only when — this theme is the selected one.
+ *
+ * The chunk is used by every themed panel, so deferring the fetch until the
+ * first panel mounts makes that mount suspend: without a warm module, opening
+ * Settings while this theme is active shows the plain panel first. But warming
+ * it unconditionally at plugin load (which is what this used to do) makes every
+ * new tab parse those maps for users who never select the theme, so this gate
+ * is what keeps the warm-up free for everyone else. The read goes through the
+ * host storage abstraction, so it works against both localStorage and
+ * chrome.storage.
+ */
+async function preloadSurfaceWhenSelected() {
+  const activeThemeId = await storageArea.get<string>(ACTIVE_THEME_KEY)
+  if (activeThemeId === GLASS_THEME_ID) await loadLiquidGlassSurface()
+}
+
+void preloadSurfaceWhenSelected().catch(() => {})
 
 const tunerWidget: WidgetDescriptor = {
   id: TUNER_WIDGET_ID,
