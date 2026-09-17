@@ -75,6 +75,14 @@ export const glassSchema: WidgetSettingsSchema = {
     { type: 'number', key: 'saturation', label: '饱和度 saturation (%)', min: 80, max: 250, step: 5, default: 125 },
     { type: 'number', key: 'frost', label: '磨砂强度 frost', min: 0, max: 1, step: 0.02, default: 0.32 },
     { type: 'number', key: 'radius', label: '圆角 radius (px)', min: 0, max: 40, step: 1, default: 24 },
+    {
+      type: 'boolean',
+      key: 'refraction',
+      label: '折射 refraction',
+      description:
+        '关闭后滤镜链只保留磨砂模糊，去掉 SVG 相图（feImage/feDisplacementMap）。实测滚动时单帧 GPU 成本约降至 1/3，代价是没有边缘弯曲与色差。',
+      default: true,
+    },
   ],
 }
 
@@ -97,6 +105,7 @@ export function glassParams(settings: WidgetSettings): {
   saturation: number
   frost: number
   radius: number
+  refraction: boolean
 } {
   return {
     engine: str(settings.engine, ['lens', 'lgr', 'noise'] as const, 'lens'),
@@ -109,5 +118,6 @@ export function glassParams(settings: WidgetSettings): {
     saturation: num(settings.saturation, 125),
     frost: num(settings.frost, 0.32),
     radius: num(settings.radius, 24),
+    refraction: settings.refraction !== false,
   }
 }

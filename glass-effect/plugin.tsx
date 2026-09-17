@@ -114,6 +114,57 @@ export const plugins = [
               border-color: rgba(255, 255, 255, 0.35) !important;
               background: rgba(255, 255, 255, 0.18) !important;
             }
+
+            /*
+             * The theme already renders the surfaces as real glass; the host's
+             * own frosted chrome on top of it is a *second* backdrop-filter
+             * element per control. That matters because the cost is per element,
+             * not per area: each one gets its own render surface and Skia
+             * saveLayer, re-evaluated whenever anything behind it is damaged.
+             * Measured on this app: three 38x38 buttons + one 122x36 control +
+             * three 30x30 hover buttons are ~1% of the glass area but ~21% of
+             * the scroll cost. They also sit *above* the glass panels, so they
+             * re-filter against already-filtered content.
+             *
+             * Neutralizing them is visually near-neutral (buttons keep their
+             * translucent fill; measured mean colour shift <0.5/255) because the
+             * backdrop behind them is a smooth wallpaper, not detail.
+             *
+             * Two of the selectors are Tailwind utilities, which the theme can
+             * target by class name: backdrop-blur-md is the heatmap's
+             * segmented control, and -right-2/-top-2 is the widget expand button
+             * (invisible until hover, but composited regardless). The offsets
+             * are scoped to this theme so other themes keep their blur.
+             */
+            [data-theme='glass-effect'] .chrome-button,
+            [data-theme='glass-effect'] .chrome-panel,
+            [data-theme='glass-effect'] .settings-panel,
+            [data-theme='glass-effect'] .search-shell,
+            [data-theme='glass-effect'] .search-popover,
+            [data-theme='glass-effect'] .backdrop-blur-md,
+            [data-theme='glass-effect'] .-right-2.-top-2 {
+              backdrop-filter: none !important;
+              -webkit-backdrop-filter: none !important;
+            }
+
+            /*
+             * Users who ask for reduced transparency get an opaque, unblurred
+             * surface instead of glass. This is the purpose-built opt-out
+             * (Chrome 118+, Media Queries 5) and it is also the cheapest state
+             * we can render: no backdrop-filter means no per-frame backdrop
+             * snapshot and no re-filter whenever content behind the panel is
+             * damaged. The tint is raised so the panel still reads as a panel.
+             */
+            @media (prefers-reduced-transparency: reduce) {
+              [data-theme='glass-effect'] .slg-glass {
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+                background: rgba(22, 28, 42, 0.94) !important;
+              }
+              [data-theme='glass-effect'] .slg-shine {
+                display: none !important;
+              }
+            }
           `,
         }),
       )

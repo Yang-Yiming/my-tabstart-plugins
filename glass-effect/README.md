@@ -85,7 +85,35 @@ noise: feTurbulence 程序化噪声（无需任何图片）
            0 0 0 1 0"   <!-- 第 4 行：A' = A -->
    ```
    第 4 行把 **alpha** 原样保留，而三张贴图全部**不透明**（standard/polar 是 JPEG、prominent 是 RGB PNG，alpha 恒为 1）→ `EDGE_MASK` 的 alpha 恒为 1、`INVERTED_MASK` 恒为 0 → 最终 `over` 合成的结果逐像素 = `ABERRATED_BLURRED` 本身（中央本来就是全透，边缘遮罩全不透）。上游作者的本意显然是经典的"把亮度写进 alpha"技巧（第 4 行写成 `0.3 0.3 0.3 0 0`），但写成了恒等——所以效果上"边缘遮罩"从未生效过。**已在 `lgr/LgrGlassFilter.tsx` 删除整条链**：17 个图元 → 10 个，与 `lens` 引擎同量级（9-10 个），输出逐像素不变。若以后想启用"只在边缘折射"的观感，正确做法是给 alpha 行补上亮度系数（或按此数学预计算遮罩 PNG 喂 feImage），届时再评估。
-2. **滤镜区域 170%×170%（= 元素面积 2.89×）比 `lens` 的 140%（1.96×）大得多**——每帧每个 pass 多约 47% 像素，包括最贵的 3 个 `feDisplacementMap` 和基础 `blur(8px)`。但**不建议直接缩**：LGR 贴图在边缘处的强度很高（实测 luminance：standard 边缘均值 115、最大值 151 就在角上；polar 88），位移在边上需要采样 headroom，缩太小会在小面板 / 大 scale 下撕边（`lens` 敢用 140% 是因为它的相图自带防撕裂边缘带 + 幅度衰减，边缘近似中性）。想试的话从 150% 开始，盯 standard 模式小面板边缘。同理可试的还有删掉末尾 0.2px 的 `feGaussianBlur`（观感是色差毛刺变硬一点）。
+2. **滤镜区域 170%×170%（= 元素面积 2.89×）比 `lens` 的 140%（1.96×）大得多**——每帧每个 pass 多约 47% 像素。**但这条在 2026-09 实测中被否掉了**：把区域放大到元素面积的 180× 与缩到 1.0×，GPU 成本没有可测差异——因为成本由元素**个数**（各自一份 render surface + `saveLayer`）和 damage 触发频率决定，不由区域面积决定（见下方性能实测）。因此**不要再为了 area 去缩 region**。LGR 贴图在边缘处的强度确实很高（实测 luminance：standard 边缘均值 115、最大值 151 就在角上；polar 88），缩太小会在小面板 / 大 scale 下撕边。真正有收益的是另一项：`feImage` 的 `preserveAspectRatio`——上游写的 `xMidYMid slice` 让正方形贴图铺非正方形面板时多花约 1.5× 开销，改成 `none` 更快（观感也会变，是中心裁剪 vs 整图拉伸之别）。
+
+### 性能实测：`url(#svg)` 在 backdrop-filter 里的真实代价（2026-09 实测）
+
+滚动时的**单帧 GPU 成本**（Chrome 150 / Apple M4 / 真实构建产物，9 个面板铺满 81% 视口，固定 240 帧滚动窗口）：
+
+| 配置 | GPU ms/s | 单帧 p95 |
+| --- | --- | --- |
+| 有折射（`blur(8px) saturate(125%) url(#f)`） | 256 | **8.13 ms** |
+| 关闭折射（`blur(8px) saturate(125%)`） | 103 | **2.13 ms** |
+
+即 **2.48×**，且 p95 从 8.13ms 降到 2.13ms——后者才是关键，因为它决定了会不会掉帧。
+
+根因（Chromium 源码）：`url(#...)` 使滤镜成为 `FilterOperation::REFERENCE`，而 `HasFilterThatMovesPixels()` 对 REFERENCE **无条件返回 true**（源码 TODO 明说 Skia 无法判断是否移动像素）。两个后果：
+
+1. 背后**任何** damage 都会把整个面板矩形标记为需要重新求值（而 `blur()` 本身也已经是 pixel-moving，所以两者叠加）；
+2. 面板**下方**的内容失去遮挡剔除（`occlusion_tracker.cc: ReduceOcclusionBelowSurface`），一直被绘制。
+
+**静止时玻璃几乎零成本**（8.9 vs 无面板 8.0 ms/s）——全部开销来自 damage 触发的重新求值，不是滤镜本身常驻。所以省电的关键是「滚动时别让它每帧重算」，而不是「别用玻璃」。
+
+**已实测无效**（别再试）：`contain: paint`、`content-visibility: auto`、缩小 filter region 到 180× 面积、primitive subregion、`will-change`、共享层 + `mask-image` 切形（mask 被 backdrop-filter 忽略，须用 `clip-path`）。
+
+**相图生成不是瓶颈**：`quantizedSize`（`divisor=2.5`、`quantStep=16`）让 9 个面板只生成 **4 张**相图，启动一次性完成（约 4×6ms）；滚动 400 帧生成次数为 **0**；拖 `displacementScale` 滑杆 151 个值也只触发 4 尺寸 × 38 key（`round(ds/8)*8` 量化，理论上限 39）。
+
+> 另注：Chromium 里 backdrop-filter 元素**逐个**占用一个 render surface + render pass + Skia `saveLayer(backdrop)`，且**不会合并**重叠的（重叠模糊 backdrop 在 cc 里被当作缺陷，有 `"Double blur detected"` 的 DCHECK）。因此成本主要由**元素个数**而非面积决定——实测单个面板面积放大 128× 成本不变。
+
+**主题会中和宿主自带的毛玻璃**：玻璃主题已经用真玻璃渲染了表面，宿主那套 `backdrop-filter` 就成了**每个控件一个额外的 backdrop 元素**。实测该应用里 3 个 `chrome-button`（38×38）+ 1 个 heatmap 分段控件（122×36）+ 3 个 widget 展开按钮（30×30）**面积只占玻璃的约 1%，却占约 25% 的滚动成本**——又一次印证「成本随元素数、不随面积」。它们还压在玻璃面板**上方**，等于对已过滤的内容再过滤一次。
+
+主题通过 `.chrome-button` / `.backdrop-blur-md` / `.-right-2.-top-2` 等选择器（作用域限定在 `[data-theme='glass-effect']`）把它们中和掉，实测 **17 → 10 个 backdrop 元素，滚动 GPU 成本 −25.5%**。观感代价极小：整页像素变化 0.34%、平均色差 0.013/255；只有在 5× 放大下才看得出按钮略透一点（背景是平滑壁纸，没有细节可糊）。其他主题不受影响。
 
 ### 给以后开发者的建议
 
@@ -99,6 +127,7 @@ noise: feTurbulence 程序化噪声（无需任何图片）
 | 参数 | 适用引擎 | 作用 | 默认 |
 | --- | --- | --- | --- |
 | engine | 全部 | 折射引擎选择 | lens |
+| refraction | 全部 | 是否启用折射；关闭后滤镜链只剩 `blur()+saturate()`，去掉 SVG 相图 | true |
 | lensMode | lens | classic 边缘弯曲 / convex 凸透镜 / rim 边缘环带 / shift 定向平移 | classic |
 | lgrMode | lgr | standard / polar / prominent 三张静态贴图 | standard |
 | displacementScale | 全部 | 折射/弯曲强度（lens 下同时决定防撕裂边缘带宽度） | 70 |

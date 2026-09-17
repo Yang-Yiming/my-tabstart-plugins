@@ -75,7 +75,7 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
   // map instead. Null until first layout measurement or while rasterizing;
   // the filter then falls back to feTurbulence.
   const lensMap = useMemo(() => {
-    if (params.engine !== 'lens' || size.width < 8 || size.height < 8) return null
+    if (!params.refraction || params.engine !== 'lens' || size.width < 8 || size.height < 8) return null
     const { newwidth, newheight } = quantizedSize(size.width, size.height, MAP_DIVISOR, MAP_QUANT_STEP)
     // Quantize the scale contribution like upstream so live slider drags don't
     // spawn a blob URL per pixel value (the band geometry depends on it).
@@ -100,6 +100,7 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
     return { key, svgUrl, width: newwidth, height: newheight }
   }, [
     params.engine,
+    params.refraction,
     params.lensMode,
     params.lensStrength,
     params.radius,
@@ -126,12 +127,18 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
     }
   }, [lensMap])
 
-  const useLensMap = params.engine === 'lens' && pngMapUrl !== null
+  const useLensMap = params.refraction && params.engine === 'lens' && pngMapUrl !== null
 
   const rScale = params.displacementScale
   const gScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.05)
   const bScale = params.displacementScale * Math.max(0, 1 - params.aberrationIntensity * 0.1)
-  const backgroundEffect = `blur(${params.blur}px) saturate(${Math.round(params.saturation)}%) url(#${filterId})`
+  // `url(#filter)` is what makes this a backdrop-filter *reference* filter, which
+  // Chromium marks as unconditionally pixel-moving: the whole panel rect is
+  // re-filtered whenever anything behind it is damaged, and occlusion culling
+  // below the panel is disabled. Dropping it leaves a plain blur, which measured
+  // ~3x cheaper per frame while scrolling, at the cost of the refraction itself.
+  const frostChain = `blur(${params.blur}px) saturate(${Math.round(params.saturation)}%)`
+  const backgroundEffect = params.refraction ? `${frostChain} url(#${filterId})` : frostChain
   return (
     <div
       {...props}
@@ -202,59 +209,60 @@ export function LiquidGlassSurface({ children, className, style, ...props }: HTM
           suspected to skip external-resource loads (feImage) inside non-rendered
           SVG containers — this mirrors how simple-liquid-glass hosts its defs.
           A defs-only SVG paints nothing. */}
-      {params.engine === 'lgr' ? (
-        <LgrGlassFilter
-          id={filterId}
-          displacementScale={params.displacementScale}
-          aberrationIntensity={params.aberrationIntensity}
-          mode={params.lgrMode}
-        />
-      ) : (
-        <svg
-          aria-hidden="true"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-        >
-          <defs>
-            <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%" colorInterpolationFilters="sRGB">
-              {useLensMap ? (
-                // The SLG classic/convex/rim maps encode X in red and Y in blue.
-                <feImage href={pngMapUrl ?? undefined} x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" result="map" />
-              ) : (
-                <feTurbulence type="fractalNoise" baseFrequency="0.006 0.009" numOctaves={1} seed={11} result="map" />
-              )}
-              <feDisplacementMap
-                in="SourceGraphic"
-                in2="map"
-                scale={rScale}
-                xChannelSelector="R"
-                yChannelSelector={useLensMap ? 'B' : 'G'}
-                result="dR"
-              />
-              <feColorMatrix in="dR" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="R" />
-              <feDisplacementMap
-                in="SourceGraphic"
-                in2="map"
-                scale={gScale}
-                xChannelSelector="R"
-                yChannelSelector={useLensMap ? 'B' : 'G'}
-                result="dG"
-              />
-              <feColorMatrix in="dG" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="G" />
-              <feDisplacementMap
-                in="SourceGraphic"
-                in2="map"
-                scale={bScale}
-                xChannelSelector="R"
-                yChannelSelector={useLensMap ? 'B' : 'G'}
-                result="dB"
-              />
-              <feColorMatrix in="dB" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="B" />
-              <feBlend in="R" in2="G" mode="screen" result="RG" />
-              <feBlend in="RG" in2="B" mode="screen" result="OUT" />
-            </filter>
-          </defs>
-        </svg>
-      )}
+      {params.refraction &&
+        (params.engine === 'lgr' ? (
+          <LgrGlassFilter
+            id={filterId}
+            displacementScale={params.displacementScale}
+            aberrationIntensity={params.aberrationIntensity}
+            mode={params.lgrMode}
+          />
+        ) : (
+          <svg
+            aria-hidden="true"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+          >
+            <defs>
+              <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%" colorInterpolationFilters="sRGB">
+                {useLensMap ? (
+                  // The SLG classic/convex/rim maps encode X in red and Y in blue.
+                  <feImage href={pngMapUrl ?? undefined} x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" result="map" />
+                ) : (
+                  <feTurbulence type="fractalNoise" baseFrequency="0.006 0.009" numOctaves={1} seed={11} result="map" />
+                )}
+                <feDisplacementMap
+                  in="SourceGraphic"
+                  in2="map"
+                  scale={rScale}
+                  xChannelSelector="R"
+                  yChannelSelector={useLensMap ? 'B' : 'G'}
+                  result="dR"
+                />
+                <feColorMatrix in="dR" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="R" />
+                <feDisplacementMap
+                  in="SourceGraphic"
+                  in2="map"
+                  scale={gScale}
+                  xChannelSelector="R"
+                  yChannelSelector={useLensMap ? 'B' : 'G'}
+                  result="dG"
+                />
+                <feColorMatrix in="dG" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="G" />
+                <feDisplacementMap
+                  in="SourceGraphic"
+                  in2="map"
+                  scale={bScale}
+                  xChannelSelector="R"
+                  yChannelSelector={useLensMap ? 'B' : 'G'}
+                  result="dB"
+                />
+                <feColorMatrix in="dB" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="B" />
+                <feBlend in="R" in2="G" mode="screen" result="RG" />
+                <feBlend in="RG" in2="B" mode="screen" result="OUT" />
+              </filter>
+            </defs>
+          </svg>
+        ))}
 
       {children}
     </div>
